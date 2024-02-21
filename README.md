@@ -1,6 +1,7 @@
 # Product API Using MediatR and CQRS
 
-In this repository, we are implementing a Product API using the Command Query Responsibility Segregation (CQRS) pattern and the MediatR library. This pattern provides a clear and structured way to design and implement our API.
+In this repository, we are implementing a Product API using the Command Query Responsibility Segregation (CQRS) pattern and the MediatR library. This pattern provides a clear and structured way to design and implement our API. We'll also explore how to implement pipeline behavior and validations using the same MediatR library and FluentValidation for validation rules.
+
 
 ## Getting Started
 You need to install the MediatR library via NuGet:
@@ -144,3 +145,66 @@ public class ProductsController : ControllerBase
 ```
 
 That's it! You have now implemented a basic CQRS pattern using MediatR in your .NET API.
+
+## Pipeline Behaviors and Validations Using MediatR and FluentValidation
+Install the necessary packages via NuGet Package Manager:
+```
+Install-Package FluentValidation
+```
+## Define Validation Rules
+```csharp
+public class CreateProductCommandValidator : AbstractValidator<CreateProductCommand>
+{
+    public CreateProductCommandValidator()
+    {
+        RuleFor(x=>x.Name).NotEmpty();
+        RuleFor(x=>x.Description).NotEmpty();
+        RuleFor(x=>x.UnitPrice).GreaterThanOrEqualTo(1);
+        RuleFor(x=>x.Quantity).GreaterThanOrEqualTo(10);
+    }
+}
+```
+## Implementing Pipeline Behavior
+
+Pipeline behaviors in MediatR allow you to encapsulate common logic across different handlers like logging, caching, error handling and importantly validation.
+
+Let's define a ValidationBehaviour that validates our requests before they reach our handlers.
+
+```csharp
+public class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+    where TRequest : IRequest<TResponse>
+{
+    private readonly IEnumerable<IValidator<TRequest>> _validators;
+
+    public ValidationBehavior(IEnumerable<IValidator<TRequest>> validators)
+    {
+        _validators = validators;
+    }
+
+    public async Task<TResponse> Handle(TRequest request, CancellationToken cancellationToken, RequestHandlerDelegate<TResponse> next)
+    {
+        var context = new ValidationContext<TRequest>(request);
+        var validationResults = await Task.WhenAll(_validators.Select(v => v.ValidateAsync(context, cancellationToken)));
+        var failures = validationResults.SelectMany(r => r.Errors).Where(f => f != null).ToList();
+
+        if (failures.Count != 0)
+        {
+            throw new ValidationException(failures);
+        }
+
+        return await next();
+    }
+}
+```
+In `ValidationBehavior`, we get all `IValidator`'s applicable and run them against the incoming request. If any validation rules are broken, we collect those failures and throw a `ValidationException`.
+
+## Register Services
+
+Don't forget to register your validators and pipeline behaviors in your service configuration in `Startup.cs`:
+
+```csharp
+services.AddValidatorsFromAssembly(typeof(Startup).Assembly);
+services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
+```
+
+That's it! With this, your application will validate incoming requests before they get to the handler, making your code clean and maintainable.
